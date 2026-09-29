@@ -46,18 +46,10 @@ jobs:
       - name: Checkout Source Code
         if: ${{ env.commit }}
         run: |
-          set -e
-          for attempt in 1 2 3; do
-            if git ls-remote "${{ env.upStream }}" >/dev/null 2>&1; then
-              git clone --filter=blob:none --single-branch "${{ env.upStream }}" TVBoxOSC
-              cd TVBoxOSC
-              git checkout "${{ env.commit }}"
-              exit 0
-            fi
-            sleep $((attempt * 10))
-          done
-          echo "Upstream repo is unreachable"
-          exit 1
+          git clone ${{ env.upStream }} TVBoxOSC
+          cd TVBoxOSC
+          git checkout ${{ env.commit }}
+          echo "tag=$(git log --date=format:'%Y%m%d-%H%M' --pretty=format:%cd ${{ env.commitS }} -1)" >> $GITHUB_ENV
       - name: Extra Modify
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
