@@ -21,9 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - userName: q215613905
+          - userName: fingersc
             repoName: TVBoxOS
-            branchName: dev
+            branchName: main
             java_ver: 17
     steps:
       - name: Checkout
