@@ -161,6 +161,18 @@ jobs:
             mv "$file" "apk/$new_base"
           done
           mv sourceCode-${{ env.commitS }}.* apk/
+      - name: Show Apk Version And Signature
+        if: ${{ env.commit }}
+        working-directory: TVBoxOSC
+        run: |
+          # 排查「每次都要先卸载才能装」的两条线索，直接打到运行日志里：
+          #   1) versionCode 是否递增（小米设备安装器据此决定是否允许覆盖）
+          #   2) 签名指纹是否每次一致（不一致则必然只能卸载重装）
+          for f in apk/*.apk; do
+            echo "== $(basename "$f")"
+            unzip -p "$f" AndroidManifest.xml >/dev/null 2>&1 || true
+            keytool -printcert -jarfile "$f" 2>/dev/null | grep -E 'Owner|SHA1|SHA256' || echo '  (签名读取失败)'
+          done
       - name: Release Note
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
