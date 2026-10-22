@@ -114,13 +114,18 @@ jobs:
           #   android native wheel ⇒ 回落到 pypi 只剩 lxml-6.1.3 源码包 ⇒
           #   Chaquopy 12 自带 pip 19.2.3 的 vendored pytoml 解析新版
           #   pyproject.toml 必然 TomlError ⇒ :pyramid:generatePython...FAILED。
-          #   对策：把 pip 的 timeout/retries 调大。必须走 pip options —— Chaquopy
+          #   对策：把 pip 的 timeout/retries 放宽。必须走 pip options —— Chaquopy
           #   调 pip 时带 --isolated 且 PIP_CONFIG_FILE=os.devnull，环境变量
           #   PIP_TIMEOUT/PIP_RETRIES 会被完全屏蔽。
+          #   ⚠ 参数是"乘积"关系，不能一味调大：pip 对每个包名都要单独抓一次
+          #     chaquo 索引页（8 个包 = 8 轮），单页最坏耗时 = retries × timeout。
+          #     默认 5×15=75s/页 ⇒ 8 页 10 分钟（这是现状的失败耗时）。
+          #     这里取 3×30=90s/页（比默认多 20%，让"慢但活着"能扛过去），
+          #     最坏 8 页 ≈ 12 分钟，不会出现"报错前先等一小时"。
           #   ⚠ 绝不能注入 --index-url / -i：Chaquopy 一旦检测到用户显式指定
           #     --index-url 就会禁用自己的仓库（chaquo.com/pypi-7.0），
           #     android wheel 反而全丢，问题更严重。
-          sed -i 's/^\( *\)pip {$/\1pip {\n\1    options "--timeout", "60", "--retries", "10"/' pyramid/build.gradle
+          sed -i 's/^\( *\)pip {$/\1pip {\n\1    options "--timeout", "30", "--retries", "3"/' pyramid/build.gradle
           echo '--- pip block after patch ---'
           grep -n -A3 'pip {' pyramid/build.gradle || true
 
@@ -157,17 +162,25 @@ jobs:
           # 该站偶尔读超时，一旦超时 pip 就只剩 pypi 的 lxml 源码包，
           # 而 pip 19.2.3 的 vendored pytoml 解析新版 pyproject.toml 必然失败
           # ⇒ :pyramid:generatePython64ReleasePythonRequirements FAILED。
-          # 这里先探一次，给抖动留出恢复窗口；探不通也不阻断（构建里
-          # 已把 pip timeout/retries 放宽，且外层还有整体重试）。
-          for i in $(seq 1 20); do
-            if curl -fsS --max-time 20 -o /dev/null https://chaquo.com/pypi-7.0/lxml/; then
+          #
+          # ⏱ 时间设计（整个 CI 原本只要 5 分钟左右，不能被这里拖长）：
+          #   正常：第一次 curl 就 200，约 1 秒返回 → 净增 ~1 秒。
+          #   抖动：最多 6 次 × (curl 10s + sleep 5s) ≈ 1.5 分钟内等它恢复。
+          #   彻底挂：~1.5 分钟后**快速失败**（exit 1），不进入 gradle。
+          #     这比现状更快 —— 现状是 pip 对 8 个包名各熬 5×15s
+          #     才报错（≈10 分钟），再叠加 gradle 重试。
+          for i in $(seq 1 6); do
+            if curl -fsS --max-time 10 -o /dev/null https://chaquo.com/pypi-7.0/lxml/; then
               echo "chaquo pip index reachable (try $i)"
               exit 0
             fi
-            echo "chaquo pip index unreachable (try $i/20), wait 15s..."
-            sleep 15
+            echo "chaquo pip index unreachable (try $i/6), wait 5s..."
+            sleep 5
           done
-          echo "::warning::chaquo pip index still unreachable, continue anyway"
+          echo "::error::chaquo.com/pypi-7.0 不可达（已重试 6 次）。"
+          echo "::error::ChaquoPy 的 android wheel 只在该站提供，站点不可达时构建必然失败。"
+          echo "::error::请直接重新触发本 workflow（该站为间歇性抖动）。"
+          exit 1
 
       - name: Build With Gradle
         if: ${{ env.commit }}
