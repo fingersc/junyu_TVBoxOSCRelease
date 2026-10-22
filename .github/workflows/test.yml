@@ -109,6 +109,20 @@ jobs:
           # 替换Windows路径为系统Python路径
           sed -i '/buildPython("D:\/Programs\/Python\/Python38\/python.exe")/d' pyramid/build.gradle
           sed -i '$ s/^#//' ./gradle.properties
+          # ★ Chaquo 索引抖动加固（v99-r12）：
+          #   故障链：chaquo.com/pypi-7.0 索引页读超时 ⇒ pip 抓不到 lxml 的
+          #   android native wheel ⇒ 回落到 pypi 只剩 lxml-6.1.3 源码包 ⇒
+          #   Chaquopy 12 自带 pip 19.2.3 的 vendored pytoml 解析新版
+          #   pyproject.toml 必然 TomlError ⇒ :pyramid:generatePython...FAILED。
+          #   对策：把 pip 的 timeout/retries 调大。必须走 pip options —— Chaquopy
+          #   调 pip 时带 --isolated 且 PIP_CONFIG_FILE=os.devnull，环境变量
+          #   PIP_TIMEOUT/PIP_RETRIES 会被完全屏蔽。
+          #   ⚠ 绝不能注入 --index-url / -i：Chaquopy 一旦检测到用户显式指定
+          #     --index-url 就会禁用自己的仓库（chaquo.com/pypi-7.0），
+          #     android wheel 反而全丢，问题更严重。
+          sed -i 's/^\( *\)pip {$/\1pip {\n\1    options "--timeout", "60", "--retries", "10"/' pyramid/build.gradle
+          echo '--- pip block after patch ---'
+          grep -n -A3 'pip {' pyramid/build.gradle || true
 
       - name: Setup Python local.properties
         working-directory: TVBoxOSC
@@ -135,13 +149,44 @@ jobs:
           java-version: ${{ matrix.java_ver }}
       - uses: gradle/actions/setup-gradle@v4
         if: ${{ env.commit }}
+      - name: Precheck Chaquo Pip Index
+        if: ${{ env.commit }}
+        working-directory: TVBoxOSC
+        run: |
+          # ChaquoPy 的 android wheel 只在 https://chaquo.com/pypi-7.0 提供。
+          # 该站偶尔读超时，一旦超时 pip 就只剩 pypi 的 lxml 源码包，
+          # 而 pip 19.2.3 的 vendored pytoml 解析新版 pyproject.toml 必然失败
+          # ⇒ :pyramid:generatePython64ReleasePythonRequirements FAILED。
+          # 这里先探一次，给抖动留出恢复窗口；探不通也不阻断（构建里
+          # 已把 pip timeout/retries 放宽，且外层还有整体重试）。
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 20 -o /dev/null https://chaquo.com/pypi-7.0/lxml/; then
+              echo "chaquo pip index reachable (try $i)"
+              exit 0
+            fi
+            echo "chaquo pip index unreachable (try $i/20), wait 15s..."
+            sleep 15
+          done
+          echo "::warning::chaquo pip index still unreachable, continue anyway"
+
       - name: Build With Gradle
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
         run: |
           chmod +x gradlew
           #只保留64位安装包./gradlew assemblerelease --build-cache --parallel --daemon --warning-mode all
-          ./gradlew assembleJava64Release assemblePython64Release --build-cache --parallel --daemon --warning-mode all
+          # pip 依赖下载是纯网络动作，Chaquo 索引偶发抖动就会让整个构建挂掉。
+          # 这里做有限次整体重试：失败后等 30s 再来一次，最多 3 次。
+          for i in 1 2 3; do
+            if ./gradlew assembleJava64Release assemblePython64Release --build-cache --parallel --daemon --warning-mode all; then
+              echo "gradle build succeeded (attempt $i)"
+              exit 0
+            fi
+            echo "::warning::gradle build failed (attempt $i), retry in 30s"
+            sleep 30
+          done
+          echo "::error::gradle build failed after 3 attempts"
+          exit 1
       - name: Prepare App
         if: ${{ env.commit }}
         working-directory: TVBoxOSC
@@ -188,11 +233,17 @@ jobs:
           echo -e '\n```' >> apk/${{ matrix.userName }}-Release.log
       - name: Upload App To Artifact
         uses: actions/upload-artifact@v4
+        # v4 的 finalize 偶发 404（服务端抖动 / 同一 run 重跑时旧 artifact 被删），
+        # 只影响构建产物留存，不该因此让后面已经能发的 APK 发不出去。
+        continue-on-error: true
         if: ${{ env.commit }}
         with:
           name: ${{ matrix.userName }}-${{ matrix.repoName }}
           path: |
             TVBoxOSC/apk/*
+          # 重跑时覆盖同名 artifact，避免残留记录导致冲突
+          overwrite: true
+          retention-days: 3
       - name: Whether Or Not to Publish
         if: ${{ inputs.donotpublish && env.commit }}
         run: |
