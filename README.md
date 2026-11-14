@@ -9,4 +9,4 @@
 This repo relies on the following third-party projects:
 - [CatVodTVOfficial/TVBoxOSC](https://github.com/CatVodTVOfficial/TVBoxOSC)
 - [q215613905/TVBoxOS](https://github.com/q215613905/TVBoxOS) (Updated: d5f500677a4da15c5836477352030d9ebb5cb37a)
-- [fingersc/TVBoxOS](https://github.com/fingersc/TVBoxOS) (Updated: 6bdeefad1f1bd9c74ebe40d78b41e76c8c0aab0d)
+- [fingersc/TVBoxOS](https://github.com/fingersc/TVBoxOS) (Updated: f05ec564b1dc6dbf952ba9ab76da62151f7a1606)
